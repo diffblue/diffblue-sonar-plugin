@@ -1,0 +1,63 @@
+name: Release to GitHub
+
+on:
+  push:
+    branches:
+      - "main"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'adopt'
+          java-version: '17'
+          cache: 'maven'
+
+      - name: Check version number has been increased
+        run: .github/scripts/check-version.sh
+      
+      - name: Configure GPG Key
+        if: ${{ env.skip == 'false' }}
+        run: |
+          echo -n "$GPG_KEY_BASE64" | base64 --decode | gpg --batch --passphrase ${GPG_PASSPHRASE} --import
+        env:
+          GPG_KEY_BASE64: ${{ secrets.GPG_KEY_BASE64 }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      
+      - name: Build and sign artifact
+        if: ${{ env.skip == 'false' }}
+        run: |
+            mvn install -B -P sign -Dgpg.passphrase="$GPG_PASSPHRASE"
+        env:
+          GPG_ID: ${{ secrets.GPG_ID }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      
+      - name: Create Release on GitHub
+        if: ${{ env.skip == 'false' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag "v${{ env.current_version }}"
+          git push origin "v${{ env.current_version }}"
+          gh release create "v${{ env.current_version }}" --repo="$GITHUB_REPOSITORY" --title="v${{ env.current_version }}" --generate-notes \
+            sonar-plugin/target/diffblue-sonar-plugin-"${{ env.current_version }}".jar \
+            sonar-plugin/target/diffblue-sonar-plugin-"${{ env.current_version }}".jar.asc
+
+      - name: Create mergeback PR
+        if: ${{ env.skip == 'false' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr create --head main --base develop \
+            --title "Mergeback: v${{ env.current_version }} into develop" \
+            --body "Automated mergeback of release v${{ env.current_version }} into develop."
+          gh pr merge main --auto --merge

@@ -1,0 +1,90 @@
+name: Build and Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'adopt'
+        java-version: '17'
+        cache: 'maven'
+
+    - name: Run Spotless Check
+      run: mvn spotless:check
+
+    - name: Run Unit and Integration Tests
+      run: mvn install
+
+  release-check:
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'adopt'
+        java-version: '17'
+        cache: 'maven'
+
+    - name: Check version number has been increased
+      run: .github/scripts/check-version.sh
+
+    - name: Fail if version is not releasable
+      if: ${{ env.skip == 'true' }}
+      run: |
+        echo "::error::Version check failed: ${{ env.skip_reason }}"
+        exit 1
+
+    - name: Configure GPG Key
+      run: |
+        echo -n "$GPG_KEY_BASE64" | base64 --decode | gpg --batch --passphrase ${GPG_PASSPHRASE} --import
+      env:
+        GPG_KEY_BASE64: ${{ secrets.GPG_KEY_BASE64 }}
+        GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+    - name: Build and sign artifact
+      run: mvn install -B -P sign -Dgpg.passphrase="$GPG_PASSPHRASE"
+      env:
+        GPG_ID: ${{ secrets.GPG_ID }}
+        GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+    - name: Upload artifact
+      id: upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: diffblue-sonar-plugin-${{ env.current_version }}
+        path: |
+          sonar-plugin/target/diffblue-sonar-plugin-${{ env.current_version }}.jar
+          sonar-plugin/target/diffblue-sonar-plugin-${{ env.current_version }}.jar.asc
+
+    - name: Comment artifact link on PR
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        ARTIFACT_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.upload.outputs.artifact-id }}"
+        gh pr comment "${{ github.event.pull_request.number }}" --body "$(cat <<EOF
+        **Build artifact for v${{ env.current_version }}**
+
+        [Download diffblue-sonar-plugin-${{ env.current_version }}]($ARTIFACT_URL)
+        EOF
+        )"

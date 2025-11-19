@@ -1,0 +1,11 @@
+# IntelliJ
+.idea/*
+
+# Maven
+target/
+.flattened-pom.xml
+
+# Diffblue
+.diffblue/
+!**/src/test/resources/**/.diffblue/
+!test-examples/.diffblue/
