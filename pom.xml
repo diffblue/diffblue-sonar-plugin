@@ -37,6 +37,11 @@ limitations under the License.
     <google.java.format.version>1.17.0</google.java.format.version>
     <gpg.plugin.version>3.2.1</gpg.plugin.version>
     <flatten.plugin.version>1.6.0</flatten.plugin.version>
+    <jacoco.plugin.version>0.8.12</jacoco.plugin.version>
+    <sonar.coverage.jacoco.xmlReportPaths>target/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
+    <sonar.projectKey>diffblue_diffblue-sonar-plugin</sonar.projectKey>
+    <sonar.organization>diffblue</sonar.organization>
+    <sonar.host.url>https://sonarcloud.io</sonar.host.url>
   </properties>
 
   <dependencyManagement>
@@ -86,6 +91,26 @@ limitations under the License.
       </plugins>
     </pluginManagement>
     <plugins>
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>${jacoco.plugin.version}</version>
+        <executions>
+          <execution>
+            <id>prepare-agent</id>
+            <goals>
+              <goal>prepare-agent</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>report</id>
+            <goals>
+              <goal>report</goal>
+            </goals>
+            <phase>test</phase>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>flatten-maven-plugin</artifactId>

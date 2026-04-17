@@ -28,7 +28,9 @@ jobs:
       run: mvn spotless:check
 
     - name: Run Unit and Integration Tests
-      run: mvn install
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      run: mvn install org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
 
   release-check:
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
