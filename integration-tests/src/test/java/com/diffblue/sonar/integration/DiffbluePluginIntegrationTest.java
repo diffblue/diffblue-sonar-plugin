@@ -76,6 +76,11 @@ class DiffbluePluginIntegrationTest {
   // Path to the built plugin JAR (relative to this module)
   private static final Path PLUGIN_JAR = resolvePluginJar();
 
+  // SonarQube Docker image to test against. Override with -Dsonarqube.image=<tag> (or the
+  // SONARQUBE_IMAGE env var) to validate compatibility with other versions. Defaults to
+  // 9.9-community, the oldest version we support (first with ARM64 support).
+  private static final String SONARQUBE_IMAGE = resolveSonarqubeImage();
+
   // SonarQube credentials - default credentials for test container
   // Note: These are only used in isolated test containers and never in production
   private static final String SONAR_USER = "admin";
@@ -85,13 +90,13 @@ class DiffbluePluginIntegrationTest {
   private static final String TEST_CALCULATOR_FILE = "src/main/java/com/example/Calculator.java";
 
   /**
-   * SonarQube container configured with: - SonarQube 9.9 Community Edition (first version with
-   * ARM64 support) - Diffblue Coverage plugin mounted into extensions/plugins/ - Health check
-   * waiting for API to be ready
+   * SonarQube container configured with: - SonarQube image from {@link #SONARQUBE_IMAGE} (defaults
+   * to 9.9 Community Edition, the oldest supported version) - Diffblue Coverage plugin mounted into
+   * extensions/plugins/ - Health check waiting for API to be ready
    */
   @Container
   static GenericContainer<?> sonarqube =
-      new GenericContainer<>("sonarqube:9.9-community")
+      new GenericContainer<>(SONARQUBE_IMAGE)
           .withExposedPorts(9000)
           .withFileSystemBind(
               PLUGIN_JAR.toString(), "/opt/sonarqube/extensions/plugins/diffblue-coverage.jar")
@@ -115,6 +120,7 @@ class DiffbluePluginIntegrationTest {
 
     // Get the dynamically assigned host and port
     baseUrl = "http://" + sonarqube.getHost() + ":" + sonarqube.getMappedPort(9000);
+    logger.info("SonarQube image under test: {}", SONARQUBE_IMAGE);
     logger.info("SonarQube is running at: {}", baseUrl);
 
     // Verify the Diffblue Coverage plugin is installed
@@ -134,6 +140,26 @@ class DiffbluePluginIntegrationTest {
     } catch (Exception e) {
       throw new RuntimeException("Failed to verify plugin installation", e);
     }
+  }
+
+  /**
+   * Resolves the SonarQube Docker image tag to test against.
+   *
+   * <p>Reads the {@code sonarqube.image} system property first, then the {@code SONARQUBE_IMAGE}
+   * environment variable, falling back to the oldest supported version. This lets CI run the same
+   * suite across a matrix of supported SonarQube versions.
+   *
+   * @return the Docker image coordinate (e.g. {@code sonarqube:26.7-community})
+   */
+  private static String resolveSonarqubeImage() {
+    String image = System.getProperty("sonarqube.image");
+    if (image == null || image.isBlank()) {
+      image = System.getenv("SONARQUBE_IMAGE");
+    }
+    if (image == null || image.isBlank()) {
+      image = "sonarqube:9.9-community";
+    }
+    return image;
   }
 
   /**

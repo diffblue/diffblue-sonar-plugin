@@ -32,6 +32,43 @@ jobs:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       run: mvn install org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
 
+  compatibility-matrix:
+    # Verify the plugin loads and produces correct coverage metrics across the range of
+    # SonarQube Community Build versions we claim to support in the Marketplace properties.
+    # Note: commercial SonarQube Server (sqs) images require a license and cannot be run here.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sonarqube-image:
+          - 'sonarqube:9.9-community'                # oldest tested version (previous minimum)
+          - 'sonarqube:25.1.0.102122-community'      # sqcb lower bound
+          - 'sonarqube:26.7.0.124771-community'      # latest Community Build (sqcb upper bound)
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'adopt'
+        java-version: '17'
+        cache: 'maven'
+
+    # SonarQube's bundled Elasticsearch requires a higher vm.max_map_count than the
+    # runner default (65530); without this newer images fail to start.
+    - name: Raise vm.max_map_count for Elasticsearch
+      run: sudo sysctl -w vm.max_map_count=262144
+
+    - name: Build plugin JAR
+      run: mvn -pl sonar-plugin -am install -DskipTests
+
+    - name: Run integration tests against ${{ matrix.sonarqube-image }}
+      run: mvn -pl integration-tests verify -Dsonarqube.image=${{ matrix.sonarqube-image }}
+
   release-check:
     if: github.event_name == 'pull_request' && github.base_ref == 'main'
     runs-on: ubuntu-latest

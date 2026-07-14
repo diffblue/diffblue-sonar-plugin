@@ -31,10 +31,14 @@ limitations under the License.
   <properties>
     <maven.compiler.source>17</maven.compiler.source>
     <maven.compiler.target>17</maven.compiler.target>
-    <testcontainers.version>1.19.3</testcontainers.version>
+    <testcontainers.version>1.20.4</testcontainers.version>
     <junit.version>5.10.1</junit.version>
     <logback.version>1.2.13</logback.version>
     <jackson.version>2.15.3</jackson.version>
+    <!-- Default SonarQube image; empty so the test resolver can fall back to the
+         SONARQUBE_IMAGE env var and then the oldest supported version. Override with
+         -Dsonarqube.image=<tag>. -->
+    <sonarqube.image></sonarqube.image>
   </properties>
 
   <dependencies>
@@ -106,6 +110,8 @@ limitations under the License.
           <!-- Ensure Docker is available -->
           <systemPropertyVariables>
             <testcontainers.reuse.enable>false</testcontainers.reuse.enable>
+            <!-- SonarQube image to test against; override with -Dsonarqube.image=<tag> -->
+            <sonarqube.image>${sonarqube.image}</sonarqube.image>
           </systemPropertyVariables>
         </configuration>
         <executions>

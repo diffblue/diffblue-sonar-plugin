@@ -111,8 +111,14 @@ public class SonarAnalysisRunner {
       }
 
       logger.info("Detected Maven project");
+
+      // Generate a user token for the scanner. Recent SonarQube versions reject the deprecated
+      // sonar.login/sonar.password (username/password) authentication for analysis and require a
+      // token instead. The token is generated via the Web API, which still accepts basic auth.
+      String token = generateToken(sonarUrl, projectKey, username, password);
+
       ProcessBuilder pb =
-          buildMavenCommand(projectDir, sonarUrl, projectKey, username, password, enableDiffblue);
+          buildMavenCommand(projectDir, sonarUrl, projectKey, token, enableDiffblue);
 
       pb.directory(projectDir.toFile());
       pb.redirectErrorStream(true);
@@ -244,6 +250,69 @@ public class SonarAnalysisRunner {
   }
 
   /**
+   * Generates a SonarQube user token via the Web API for scanner authentication.
+   *
+   * <p>Recent SonarQube versions no longer accept username/password (sonar.login/sonar.password)
+   * for analysis and require a token. The token is created using basic auth, which the Web API
+   * still supports. The token name is derived from the project key so parallel/repeated runs use
+   * distinct names; any existing token with the same name is revoked first to avoid a conflict.
+   *
+   * @param sonarUrl Base URL of the SonarQube instance
+   * @param projectKey Project key, used to build a unique token name
+   * @param username SonarQube username
+   * @param password SonarQube password
+   * @return the generated token value
+   */
+  private static String generateToken(
+      String sonarUrl, String projectKey, String username, String password) {
+    String tokenName = "it-token-" + projectKey;
+    String authHeader = createAuthHeader(username, password);
+    HttpClient httpClient = HttpClient.newHttpClient();
+    try {
+      // Revoke any pre-existing token with this name so regeneration does not fail on conflict.
+      String revokeBody = "name=" + URLEncoder.encode(tokenName, StandardCharsets.UTF_8);
+      HttpRequest revokeRequest =
+          HttpRequest.newBuilder()
+              .uri(URI.create(sonarUrl + "/api/user_tokens/revoke"))
+              .header("Authorization", authHeader)
+              .header("Content-Type", "application/x-www-form-urlencoded")
+              .POST(HttpRequest.BodyPublishers.ofString(revokeBody))
+              .build();
+      httpClient.send(revokeRequest, HttpResponse.BodyHandlers.ofString());
+
+      // Generate a fresh token.
+      String generateBody = "name=" + URLEncoder.encode(tokenName, StandardCharsets.UTF_8);
+      HttpRequest generateRequest =
+          HttpRequest.newBuilder()
+              .uri(URI.create(sonarUrl + "/api/user_tokens/generate"))
+              .header("Authorization", authHeader)
+              .header("Content-Type", "application/x-www-form-urlencoded")
+              .POST(HttpRequest.BodyPublishers.ofString(generateBody))
+              .build();
+      HttpResponse<String> response =
+          httpClient.send(generateRequest, HttpResponse.BodyHandlers.ofString());
+
+      if (response.statusCode() != 200) {
+        throw new RuntimeException(
+            "Failed to generate SonarQube token: HTTP "
+                + response.statusCode()
+                + " - "
+                + response.body());
+      }
+
+      String token = objectMapper.readTree(response.body()).path("token").asText();
+      if (token == null || token.isBlank()) {
+        throw new RuntimeException(
+            "SonarQube token generation returned no token: " + response.body());
+      }
+      logger.info("Generated SonarQube analysis token '{}'", tokenName);
+      return token;
+    } catch (IOException | InterruptedException e) {
+      throw new RuntimeException("Failed to generate SonarQube token", e);
+    }
+  }
+
+  /**
    * Creates a basic authentication header value.
    *
    * @param username SonarQube username
@@ -261,20 +330,21 @@ public class SonarAnalysisRunner {
    * @param command The command list to add properties to
    * @param sonarUrl SonarQube URL
    * @param projectKey Project key
-   * @param username SonarQube username
-   * @param password SonarQube password
+   * @param token SonarQube user token used for scanner authentication
    * @param enableDiffblue Whether to enable Diffblue plugin
    */
   private static void addCommonSonarProperties(
       List<String> command,
       String sonarUrl,
       String projectKey,
-      String username,
-      String password,
+      String token,
       boolean enableDiffblue) {
     command.add("-Dsonar.host.url=" + sonarUrl);
-    command.add("-Dsonar.login=" + username);
-    command.add("-Dsonar.password=" + password);
+    // Pass the token via both properties for cross-version compatibility: newer SonarQube uses
+    // sonar.token, while 9.9 only recognises a token supplied in sonar.login. Setting both to the
+    // same token value is accepted by every version in the supported range.
+    command.add("-Dsonar.token=" + token);
+    command.add("-Dsonar.login=" + token);
     command.add("-Dsonar.projectKey=" + projectKey);
 
     if (enableDiffblue) {
@@ -288,18 +358,12 @@ public class SonarAnalysisRunner {
    * @param projectDir Project directory path
    * @param sonarUrl SonarQube URL
    * @param projectKey Project key
-   * @param username SonarQube username
-   * @param password SonarQube password
+   * @param token SonarQube user token used for scanner authentication
    * @param enableDiffblue Whether to enable Diffblue plugin
    * @return ProcessBuilder configured for Maven
    */
   private static ProcessBuilder buildMavenCommand(
-      Path projectDir,
-      String sonarUrl,
-      String projectKey,
-      String username,
-      String password,
-      boolean enableDiffblue) {
+      Path projectDir, String sonarUrl, String projectKey, String token, boolean enableDiffblue) {
     List<String> command = new ArrayList<>();
 
     // Use mvn wrapper if available, otherwise system mvn
@@ -308,7 +372,7 @@ public class SonarAnalysisRunner {
     command.add("verify");
     command.add("sonar:sonar");
 
-    addCommonSonarProperties(command, sonarUrl, projectKey, username, password, enableDiffblue);
+    addCommonSonarProperties(command, sonarUrl, projectKey, token, enableDiffblue);
 
     // Skip tests if they would fail (we're only interested in analysis)
     command.add("-DskipTests=false"); // Run tests to generate coverage
